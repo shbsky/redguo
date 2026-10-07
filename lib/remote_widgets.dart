@@ -419,9 +419,14 @@ class TelevisionSearchDialog extends StatefulWidget {
 
 class _TelevisionSearchDialogState extends State<TelevisionSearchDialog> {
   late final _controller = TextEditingController(text: widget.initialValue);
+  final _field = FocusNode(debugLabel: 'television-search-field');
+  final _submit = FocusNode(debugLabel: 'television-search-submit');
+
   @override
   void dispose() {
     _controller.dispose();
+    _field.dispose();
+    _submit.dispose();
     super.dispose();
   }
 
@@ -441,9 +446,12 @@ class _TelevisionSearchDialogState extends State<TelevisionSearchDialog> {
               SearchInput(
                 autofocus: true,
                 controller: _controller,
+                focusNode: _field,
                 hint: '输入剧名',
                 suggestions: widget.suggestions,
                 onCancel: widget.onCancel,
+                onNavigateUp: () => _submit.requestFocus(),
+                onNavigateDown: () => _submit.requestFocus(),
                 onSearch: (value) => Navigator.pop(context, value),
               ),
               if (widget.recentSearches.isNotEmpty) ...[
@@ -475,9 +483,22 @@ class _TelevisionSearchDialogState extends State<TelevisionSearchDialog> {
         onPressed: () => Navigator.pop(context, ''),
         child: const Text('清空'),
       ),
-      FilledButton(
-        onPressed: () => Navigator.pop(context, _controller.text.trim()),
-        child: const Text('搜索'),
+      Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onKeyEvent: (node, event) {
+          if (event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.arrowUp) {
+            _field.requestFocus();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: FilledButton(
+          focusNode: _submit,
+          onPressed: () => Navigator.pop(context, _controller.text.trim()),
+          child: const Text('搜索'),
+        ),
       ),
     ],
   );

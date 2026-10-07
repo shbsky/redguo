@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 class SearchInput extends StatefulWidget {
   const SearchInput({
@@ -12,7 +13,10 @@ class SearchInput extends StatefulWidget {
     this.onChanged,
     this.suggestions,
     this.onCancel,
+    this.focusNode,
     this.autofocus = false,
+    this.onNavigateUp,
+    this.onNavigateDown,
   });
   final TextEditingController controller;
   final String hint;
@@ -20,23 +24,48 @@ class SearchInput extends StatefulWidget {
   final ValueChanged<String>? onChanged;
   final Future<List<String>> Function(String)? suggestions;
   final VoidCallback? onCancel;
+  final FocusNode? focusNode;
   final bool autofocus;
+  final VoidCallback? onNavigateUp;
+  final VoidCallback? onNavigateDown;
   @override
   State<SearchInput> createState() => _SearchInputState();
 }
 
 class _SearchInputState extends State<SearchInput> {
-  final _focus = FocusNode();
+  FocusNode? _owned;
+  FocusNode get _focus {
+    final node = widget.focusNode;
+    return node ?? (_owned ??= FocusNode());
+  }
   Timer? _timer;
   Completer<Iterable<String>>? _pending;
   int _generation = 0;
   bool _selected = false;
+  bool _suggesting = false;
   final _cache = <String, List<String>>{};
+
+  KeyEventResult _verticalKey(FocusNode node, KeyEvent event) {
+    if (_suggesting || (event is! KeyDownEvent && event is! KeyRepeatEvent)) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown && widget.onNavigateDown != null) {
+      widget.onNavigateDown!();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp && widget.onNavigateUp != null) {
+      widget.onNavigateUp!();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   void _cancel() {
     _timer?.cancel();
     widget.onCancel?.call();
     _generation++;
+    _suggesting = false;
     if (_pending != null && !_pending!.isCompleted) {
       _pending!.complete(const []);
     }
@@ -51,7 +80,7 @@ class _SearchInputState extends State<SearchInput> {
   @override
   void dispose() {
     _cancel();
-    _focus.dispose();
+    _owned?.dispose();
     super.dispose();
   }
 
@@ -64,7 +93,10 @@ class _SearchInputState extends State<SearchInput> {
         !value.composing.isCollapsed) {
       return const [];
     }
-    if (_cache.containsKey(query)) return _cache[query]!;
+    if (_cache.containsKey(query)) {
+      _suggesting = _cache[query]!.isNotEmpty;
+      return _cache[query]!;
+    }
     final generation = _generation;
     final pending = Completer<Iterable<String>>();
     _pending = pending;
@@ -76,6 +108,7 @@ class _SearchInputState extends State<SearchInput> {
         if (generation == _generation && mounted) {
           if (_cache.length >= 32) _cache.remove(_cache.keys.first);
           _cache[query] = result;
+          _suggesting = result.isNotEmpty;
           if (!pending.isCompleted) pending.complete(result);
         }
       } catch (_) {}
@@ -133,43 +166,48 @@ class _SearchInputState extends State<SearchInput> {
         _selected = true;
         _submit(value);
       },
-      fieldViewBuilder: (context, controller, focus, submitted) => TextField(
-        controller: controller,
-        focusNode: focus,
-        autofocus: widget.autofocus,
-        textInputAction: TextInputAction.search,
-        onChanged: (value) {
-          widget.onChanged?.call(value);
-          setState(() {});
-        },
-        onSubmitted: (value) {
-          _selected = false;
-          submitted();
-          if (!_selected) _submit(value);
-        },
-        decoration: InputDecoration(
-          hintText: widget.hint,
-          prefixIcon: const Icon(Icons.search_rounded),
-          suffixIcon: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (controller.text.isNotEmpty)
+      fieldViewBuilder: (context, controller, focus, submitted) => Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onKeyEvent: _verticalKey,
+        child: TextField(
+          controller: controller,
+          focusNode: focus,
+          autofocus: widget.autofocus,
+          textInputAction: TextInputAction.search,
+          onChanged: (value) {
+            widget.onChanged?.call(value);
+            setState(() {});
+          },
+          onSubmitted: (value) {
+            _selected = false;
+            submitted();
+            if (!_selected) _submit(value);
+          },
+          decoration: InputDecoration(
+            hintText: widget.hint,
+            prefixIcon: const Icon(Icons.search_rounded),
+            suffixIcon: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (controller.text.isNotEmpty)
+                  IconButton(
+                    tooltip: '清空搜索',
+                    icon: const Icon(Icons.close_rounded),
+                    onPressed: () {
+                      _cancel();
+                      controller.clear();
+                      widget.onChanged?.call('');
+                      setState(() {});
+                    },
+                  ),
                 IconButton(
-                  tooltip: '清空搜索',
-                  icon: const Icon(Icons.close_rounded),
-                  onPressed: () {
-                    _cancel();
-                    controller.clear();
-                    widget.onChanged?.call('');
-                    setState(() {});
-                  },
+                  tooltip: '搜索',
+                  icon: const Icon(Icons.arrow_forward_rounded),
+                  onPressed: () => _submit(controller.text),
                 ),
-              IconButton(
-                tooltip: '搜索',
-                icon: const Icon(Icons.arrow_forward_rounded),
-                onPressed: () => _submit(controller.text),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
